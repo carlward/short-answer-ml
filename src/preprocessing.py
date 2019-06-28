@@ -55,6 +55,6 @@ class MRPCDataset(TensorDataset):
         ix_tensor = torch.zeros(n_seq, self.max_seq_length, dtype=torch.long)
 
         for i, ix in enumerate(seq_ix_stack):
-            ix_tensor[i, :min(len(ix), self.max_seq_length)] = ix
+            ix_tensor[i, :min(len(ix), self.max_seq_length)] = ix + 1
 
         return ix_tensor
