@@ -12,7 +12,7 @@ LABEL_COL = 'Quality'
 class MRPCDataset(TensorDataset):
     """Microsoft Research Paraphrase Challenge dataset."""
 
-    def __init__(self, root_dir, tokenizer, split='train'):
+    def __init__(self, root_dir, tokenizer, split='train', neg_label_val=-1):
         """
         Args:
             root_dir (string): Directory containing the datasets.
@@ -26,7 +26,9 @@ class MRPCDataset(TensorDataset):
         self.label_col = 'Quality'
         self.tokenizer = tokenizer
         self.samples = pd.read_csv(self.file_path, sep='\t', quoting=3)
-        self.samples[self.label_col] = self.samples[self.label_col].map(lambda v: -1 if v == 0 else v)
+        self.neg_label_val = neg_label_val
+        self.samples[self.label_col] = self.samples[self.label_col].map(
+            lambda v: neg_label_val if v == 0 else v)
 
         # Build Tensors
         left_seq, left_lens = self.seqs_to_tensor(self.samples[self.seq_1_col])
