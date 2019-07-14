@@ -4,6 +4,80 @@ from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
+class BiLSTMEncoder(nn.Module):
+    def __init__(self, embeddingSize, hiddenSize, layers=1, dropProb=0.05):
+        super(BiLSTMEncoder, self).__init__()
+        self.biLSTM = nn.LSTM(
+            embeddingSize,
+            hiddenSize,
+            num_layers=layers,
+            batch_first=True,
+            dropout=dropProb if layers > 1 else 0,
+            bidirectional=True)
+
+    def forward(self, embeddings, seq, seqLen):
+        # Sort batch
+        lens, sortedIdx = seqLen.sort(0, descending=True)
+        seqSorted = seq[sortedIdx]
+
+        # LSTM Features
+        embeds = embeddings(seqSorted)
+        packed, _ = self.biLSTM(pack_padded_sequence(embeds, lens, batch_first=True))
+        unPacked, _ = pad_packed_sequence(packed, batch_first=True)
+        pooled = F.adaptive_max_pool1d(unPacked.permute(0, 2, 1), 1).view(unPacked.size(0), -1)
+
+        # Unsort Output
+        _, idx = sortedIdx.sort(0)
+        return pooled[idx]
+
+
+class SeqClassifier(nn.Module):
+    def __init__(self, embeddingSize, hiddenSize, nClasses, dropProb=0.05):
+        super(SeqClassifier, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Dropout(p=dropProb),
+            nn.Linear(embeddingSize, hiddenSize),
+            nn.ReLU(),
+            nn.Dropout(p=dropProb),
+            nn.Linear(hiddenSize, hiddenSize),
+            nn.ReLU(),
+            nn.Linear(hiddenSize, nClasses)
+        )
+
+    def forward(self, leftFeat, rightFeat):
+        combinedFeat = torch.cat([leftFeat, rightFeat, (leftFeat - rightFeat).abs(), leftFeat*rightFeat], 1)
+        return self.fc(combinedFeat)
+
+
+class BiLSTMModel(nn.Module):
+    def __init__(self, embeddings, nClasses=2, hiddenSizeEncoder=141,
+                 hiddenSizeCls=128, layers=2, dropProb=0.05):
+        super(BiLSTMModel, self).__init__()
+
+        vocabSize, embeddingSize = embeddings.shape
+        self.embeddings = self._setupEmbeddings(embeddings, vocabSize, embeddingSize)
+        self.encoder = BiLSTMEncoder(
+            embeddingSize,
+            hiddenSize=hiddenSizeEncoder,
+            layers=layers,
+            dropProb=dropProb)
+        self.classifer = SeqClassifier(hiddenSizeEncoder*8, hiddenSize=hiddenSizeCls, nClasses=nClasses)
+
+    def _setupEmbeddings(self, embeddings, vocabSize, embeddingSize):
+        embeddingLayer = nn.Embedding(vocabSize, embeddingSize)
+        embeddingLayer.from_pretrained(embeddings, freeze=True)
+        return embeddingLayer
+
+    def forward(self, inputs):
+        leftFeat = self.encoder(self.embeddings, inputs.leftSeq, inputs.leftLen)
+        rightFeat = self.encoder(self.embeddings, inputs.rightSeq, inputs.rightLen)
+        return self.classifer(leftFeat, rightFeat)
+
+    def predict(self, inputs):
+        with torch.no_grad():
+            return F.softmax(self.forward(inputs), dim=1)
+
+
 class MalLSTMModel(nn.Module):
     def __init__(self, embeddings, hiddenSize, layers=1, dropProb=0.05):
         super(MalLSTMModel, self).__init__()
