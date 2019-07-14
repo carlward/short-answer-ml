@@ -4,59 +4,117 @@ import pandas as pd
 
 import torch
 from torch.utils.data import TensorDataset
-SEQ_1_COL = '#1 String'
-SEQ_2_COL = '#2 String'
-LABEL_COL = 'Quality'
 
 
-class MRPCDataset(TensorDataset):
-    """Microsoft Research Paraphrase Challenge dataset."""
+class WordSeqDataset(TensorDataset):
+    """Generic class to load and vectorize word sequence datasets."""
 
-    def __init__(self, root_dir, tokenizer, split='train', neg_label_val=-1):
+    def __init__(self, rootDir, split, tokenizer, splits, seq1Col, seq2Col, labelCol, labelMapping=None):
         """
         Args:
             root_dir (string): Directory containing the datasets.
-            tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
             split: (string): Dataset to select. One of {‘train’, ‘test’}
+            tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+            splits (dict): Mapping of keyword to dataset filename.
+            seq1Col: (string): Column name of first sequence column.
+            seq2Col: (string): Column name for second sequence column.
+            labelCol: (string): Column name for label column.
+            labelMapping: (dict, optional): Mapping of label values to integer values.
         """
-        file_name = 'msr_paraphrase_train.tsv' if split == 'train' else 'msr_paraphrase_test.tsv'
-        self.file_path = Path.cwd() / root_dir / file_name
-        self.seq_1_col = '#1 String'
-        self.seq_2_col = '#2 String'
-        self.label_col = 'Quality'
+
+        self.filePath = Path.cwd() / rootDir / splits[split]
+        self.seq1Col = seq1Col
+        self.seq2Col = seq2Col
+        self.labelCol = labelCol
         self.tokenizer = tokenizer
-        self.samples = pd.read_csv(self.file_path, sep='\t', quoting=3)
-        self.neg_label_val = neg_label_val
-        self.samples[self.label_col] = self.samples[self.label_col].map(
-            lambda v: neg_label_val if v == 0 else v)
+        self.samples = self._loadFile()
+        self.labelMapping = labelMapping
+        self.samples[self.labelCol] = self.samples[self.labelCol].map(labelMapping or (lambda v: v))
 
         # Build Tensors
-        left_seq, left_lens = self.seqs_to_tensor(self.samples[self.seq_1_col])
-        right_seq, right_lens = self.seqs_to_tensor(self.samples[self.seq_2_col])
-
+        seq1, seq1Lens = self.seqsToTensor(self.samples[self.seq1Col])
+        seq2, seq2Lens = self.seqsToTensor(self.samples[self.seq2Col])
         self.tensors = (
-            left_seq,
-            left_lens,
-            right_seq,
-            right_lens,
-            torch.tensor(self.samples[self.label_col], dtype=torch.long)
+            seq1,
+            seq1Lens,
+            seq2,
+            seq2Lens,
+            torch.tensor(self.samples[self.labelCol], dtype=torch.long)
         )
+
+    def _loadFile(self):
+        return pd.read_csv(self.filePath)
 
     def __len__(self):
         return self.samples.shape[0]
 
-    def _seq_to_ix(self, seq):
+    def _seqToIx(self, seq):
         return torch.tensor([token.lex_id for token in self.tokenizer(seq)], dtype=torch.long)
 
-    def seqs_to_tensor(self, seq_array):
-        n_seq = len(seq_array)
-        seq_ix_stack = (self._seq_to_ix(seq) for seq in seq_array)
-        max_seq_length = seq_array.map(len).max()
+    def seqsToTensor(self, seqArray):
+        nSeq = seqArray.shape[0]
+        seqIxStack = [self._seqToIx(seq) for seq in seqArray]
+        maxSeqLength = max(seq.shape[0] for seq in seqIxStack)
 
-        ix_tensor = torch.zeros((n_seq, max_seq_length), dtype=torch.long)
-        seq_len_tensor = torch.zeros(n_seq, dtype=torch.long)
-        for i, ix in enumerate(seq_ix_stack):
-            ix_tensor[i, :min(ix.size(0), max_seq_length)] = ix
-            seq_len_tensor[i] = ix.size(0)
+        ixTensor = torch.zeros((nSeq, maxSeqLength), dtype=torch.long)
+        seqLenTensor = torch.zeros(nSeq, dtype=torch.long)
+        for i, ix in enumerate(seqIxStack):
+            ixTensor[i, :min(ix.shape[0], maxSeqLength)] = ix
+            seqLenTensor[i] = ix.shape[0]
 
-        return ix_tensor, seq_len_tensor
+        return ixTensor, seqLenTensor
+
+
+class MRPCDataset(WordSeqDataset):
+    """Microsoft Research Paraphrase Challenge dataset."""
+
+    def __init__(self, rootDir, tokenizer, split='train'):
+        """
+        Args:
+            root_dir (string): Directory containing the datasets.
+            split: (string): Dataset to select. One of {‘train’, ‘test’}
+            tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+        """
+        seq1Col = '#1 String'
+        seq2Col = '#2 String'
+        labelCol = 'Quality'
+        splits = dict(
+            train='msr_paraphrase_train.tsv',
+            test='msr_paraphrase_test.tsv'
+        )
+        super(MRPCDataset, self).__init__(
+            rootDir,
+            split=split,
+            tokenizer=tokenizer,
+            splits=splits,
+            seq1Col=seq1Col,
+            seq2Col=seq2Col,
+            labelCol=labelCol)
+
+    def _loadFile(self):
+        return pd.read_csv(self.filePath, sep='\t', quoting=3)
+
+
+class PPDBDataset(WordSeqDataset):
+    """Paraphrase Phrasal English DB dataset."""
+    def __init__(self, rootDir, tokenizer, split='train'):
+        """
+        Args:
+            root_dir (string): Directory containing the datasets.
+            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
+            tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+        """
+        seq1Col = 'phrase'
+        seq2Col = 'paraphrase'
+        labelCol = 'label'
+        splits = dict(
+            train='ppdb_with_negative_train.csv',
+            test='ppdb_with_negative_test.csv')
+        super(PPDBDataset, self).__init__(
+            rootDir,
+            split=split,
+            tokenizer=tokenizer,
+            splits=splits,
+            seq1Col=seq1Col,
+            seq2Col=seq2Col,
+            labelCol=labelCol)
