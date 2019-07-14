@@ -118,3 +118,43 @@ class PPDBDataset(WordSeqDataset):
             seq1Col=seq1Col,
             seq2Col=seq2Col,
             labelCol=labelCol)
+
+
+class SNLIDataset(WordSeqDataset):
+    """Stanford Natural Language Inference dataset."""
+
+    def __init__(self, rootDir, tokenizer, split='train'):
+        """
+        Args:
+            root_dir (string): Directory containing the datasets.
+            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
+            tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+        """
+        seq1Col = 'sentence1'
+        seq2Col = 'sentence2'
+        labelCol = 'gold_label'
+        splits = dict(
+            train='snli_1.0_train.txt',
+            test='snli_1.0_test.txt',
+            dev='snli_1.0_dev.txt')
+        labelMapping = dict(
+             entailment=0,
+             contradiction=1,
+             neutral=2
+        )
+        super(SNLIDataset, self).__init__(
+            rootDir,
+            split=split,
+            tokenizer=tokenizer,
+            splits=splits,
+            seq1Col=seq1Col,
+            seq2Col=seq2Col,
+            labelCol=labelCol,
+            labelMapping=labelMapping)
+
+    def _loadFile(self):
+        return (
+            pd.read_csv(self.filePath, sep='\t')
+            .dropna(how='any', subset=[self.labelCol, self.seq1Col, self.seq2Col])
+            .loc[lambda df: df[self.labelCol] != '-']  # Ignore no consensus labels
+        )
