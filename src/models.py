@@ -68,6 +68,10 @@ class BiLSTMModel(nn.Module):
         embeddingLayer.from_pretrained(embeddings, freeze=True)
         return embeddingLayer
 
+    def freezeEncoder(self):
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
     def forward(self, inputs):
         leftFeat = self.encoder(self.embeddings, inputs.leftSeq, inputs.leftLen)
         rightFeat = self.encoder(self.embeddings, inputs.rightSeq, inputs.rightLen)
