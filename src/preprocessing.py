@@ -65,6 +65,90 @@ class WordSeqDataset(TensorDataset):
         return ixTensor, seqLenTensor
 
 
+class ASAPSASDataset(WordSeqDataset):
+    """Automated Student Assessment Prize Phase 2 dataset."""
+    def __init__(self, rootDir, tokenizer, split='train', refresh=False, seed=42):
+        """
+        Args:
+            root_dir (string): Directory containing the datasets.
+            tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
+            refresh: (bool): Flag to rebuild derived datasets.
+            seed: (int): Random seed when sampling the derived datasets.
+        """
+        seq1Col = 'referencetext'
+        seq2Col = 'essaytext'
+        labelCol = 'score'
+        splits = dict(
+            train='train_with_reference_text_.csv',
+            test='test_with_reference_text_.csv',
+            dev='dev_with_reference_text_.csv')
+
+        self.seed = seed
+        if not all((Path.cwd() / rootDir / f).exists() for f in splits):
+            self.buildDatasets(rootDir, splits)
+
+        super(ASAPSASDataset, self).__init__(
+            rootDir,
+            split=split,
+            tokenizer=tokenizer,
+            splits=splits,
+            seq1Col=seq1Col,
+            seq2Col=seq2Col,
+            labelCol=labelCol)
+
+    def _selectReferenceTextId(self, essaySet):
+        # Pick median length top scoring answers as the reference for each essay set
+        topScoring = essaySet[essaySet['score'] == essaySet['score'].max()]
+        medianIdx = topScoring.shape[0] // 2
+        essaySet['referenceId'] = topScoring.sort_values('essaylength').iloc[medianIdx]['id']
+        return essaySet
+
+    def buildDatasets(self, rootDir, splits, trainFrac=0.7, testFrac=0.2):
+        devFrac = 1-trainFrac-testFrac
+        assert devFrac + trainFrac + testFrac == 1
+
+        # Format and combine all labeled datasets
+        trainSet = (
+            pd.read_csv(Path.cwd() / rootDir / 'train_rel_2.tsv', sep='\t')
+            .rename(columns=lambda col: col.lower())
+            .rename(columns=dict(score1='score'))
+            .loc[:, ['id', 'essayset', 'score', 'essaytext']]
+        )
+        leaderBoardLabels = pd.read_csv(Path.cwd() / rootDir / 'public_leaderboard_solution.csv').set_index('id')
+        leaderBoardSet = (
+            pd.read_csv(Path.cwd() / rootDir / 'public_leaderboard_rel_2.tsv', sep='\t')
+            .rename(columns=lambda col: col.lower())
+            .join(leaderBoardLabels, on='id', how='inner')
+            .rename(columns=dict(essay_score='score'))
+            .loc[:, ['id', 'essayset', 'score', 'essaytext']]
+        )
+        allLabeled = pd.concat([trainSet, leaderBoardSet], ignore_index=True)
+
+        # Calculate reference answers to act as ground truth teacher labels
+        allLabeled = (
+            allLabeled
+            .assign(essaylength=lambda df: df['essaytext'].map(len))
+            .groupby('essayset').apply(self._selectReferenceTextId)
+            .set_index('id')
+            .assign(referencetext=lambda df: df.loc[df['referenceId'], 'essaytext'].values)
+            .loc[
+                lambda df: ~df.index.isin(df['referenceId'].unique()),  # Drop reference essays
+                ['essayset', 'score', 'essaytext', 'referencetext']
+            ]
+        )
+
+        # Sample new datasets and persist
+        newTrain = allLabeled.sample(frac=trainFrac, random_state=self.seed)
+        remaining = allLabeled.drop(newTrain.index)
+        newTest = remaining.sample(frac=testFrac, random_state=self.seed)
+        newDev = remaining.drop(newTest.index)
+
+        newTrain.to_csv(Path.cwd() / rootDir / splits['train'])
+        newTest.to_csv(Path.cwd() / rootDir / splits['test'])
+        newDev.to_csv(Path.cwd() / rootDir / splits['dev'])
+
+
 class MRPCDataset(WordSeqDataset):
     """Microsoft Research Paraphrase Challenge dataset."""
 
@@ -72,8 +156,8 @@ class MRPCDataset(WordSeqDataset):
         """
         Args:
             root_dir (string): Directory containing the datasets.
-            split: (string): Dataset to select. One of {‘train’, ‘test’}
             tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+            split: (string): Dataset to select. One of {‘train’, ‘test’}
         """
         seq1Col = '#1 String'
         seq2Col = '#2 String'
@@ -101,8 +185,8 @@ class PPDBDataset(WordSeqDataset):
         """
         Args:
             root_dir (string): Directory containing the datasets.
-            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
             tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
         """
         seq1Col = 'phrase'
         seq2Col = 'paraphrase'
@@ -127,8 +211,8 @@ class SNLIDataset(WordSeqDataset):
         """
         Args:
             root_dir (string): Directory containing the datasets.
-            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
             tokenizer (Tokenizer): Spacy Tokenizer object associated with word embeddings.
+            split: (string): Dataset to select. One of {‘train’, ‘test’, 'dev'}
         """
         seq1Col = 'sentence1'
         seq2Col = 'sentence2'
