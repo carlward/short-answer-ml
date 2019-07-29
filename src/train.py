@@ -66,7 +66,7 @@ def train(params):
     print('Initializing...')
 
     # Initialize NLP tools
-    vectorPath = Path(params.vector_cache_dir) / params.dataset / params.word_embeds
+    vectorPath = Path(params.vector_cache_dir) / 'snli_1.0' / params.word_embeds
     vocab = VocabBuilder(Path(vectorPath))
     if params.rebuild_vocab or not (Path.is_file(vocab.tokenizerPath) and Path.is_dir(vocab.vectorPath)):
         print('No vocabulary found. Rebuilding from dataset')
@@ -178,6 +178,7 @@ def train(params):
         scheduler.step(epochLossEval)
         if epochLossEval < bestLoss:
             bestLoss = epochLossEval
+            stopCount = 0
         elif params.optimizer == 'sgd':
             optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] / 5
             if optimizer.param_groups[0]['lr'] < 1e-5:
@@ -206,7 +207,7 @@ def train(params):
 
     # Load best model weights
     model.load_state_dict(bestWeights)
-    return model
+    return model, vocab.tokenizer
 
 
 def test(model, tokenizer, params):
@@ -348,21 +349,20 @@ def parseArgs():
         type=str,
         default='.cache'
     )
-    return parser.parse_known_args()
+    return parser.parse_args()
 
 
 def main():
     params = parseArgs()
-
     torch.manual_seed(params.seed)
     torch.cuda.manual_seed(params.seed)
 
     model, tokenizer = train(params)
-    testAcc = test(model, tokenizer)
+    testAcc = test(model, tokenizer, params)
     print('-' * 89)
     print('Test Accuracy:\t{:3.3f}'.format(testAcc))
 
-    # Persist best model
+    # # Persist best model
     modelName = 'encoder' if params.mode == 'train_encoder' else 'cls'
     torch.save(model, Path.cwd() / params.model_dir / '{0}Model.pt'.format(modelName))
     torch.save(model.state_dict(), Path.cwd() / params.model_dir / '{0}Params.pt'.format(modelName))
