@@ -18,7 +18,7 @@ class BiLSTMEncoder(nn.Module):
     def forward(self, embeddings, seq, seqLen):
         # Sort batch
         lens, sortedIdx = seqLen.sort(0, descending=True)
-        seqSorted = seq[sortedIdx]
+        seqSorted = seq[sortedIdx, 0:seqLen.max()]  # Trim to longest sequence length to reduce padding
 
         # LSTM Features
         embeds = embeddings(seqSorted)
@@ -34,6 +34,9 @@ class BiLSTMEncoder(nn.Module):
 class SeqClassifier(nn.Module):
     def __init__(self, embeddingSize, hiddenSize, nClasses, dropProb=0.05):
         super(SeqClassifier, self).__init__()
+        self.nClasses = nClasses
+        self.embeddingSize = embeddingSize
+        self.hiddenSize = hiddenSize
         self.fc = nn.Sequential(
             nn.Dropout(p=dropProb),
             nn.Linear(embeddingSize, hiddenSize),
@@ -50,32 +53,43 @@ class SeqClassifier(nn.Module):
 
 
 class BiLSTMModel(nn.Module):
-    def __init__(self, embeddings, nClasses=2, hiddenSizeEncoder=141,
-                 hiddenSizeCls=128, layers=2, dropProb=0.05):
+    def __init__(self, embeddings=None, nClasses=2, hiddenSizeEncoder=141,
+                 hiddenSizeCls=128, layers=2, dropProb=0.05, freezeEmbeds=False):
         super(BiLSTMModel, self).__init__()
+        vocabSize, embeddingSize = (1999995, 300) if embeddings is None else embeddings.shape
+        self.embeddingSize = embeddingSize
+        self.vocabSize = vocabSize
+        self.hiddenSizeCls = hiddenSizeCls
+        self.hiddenSizeEncoder = hiddenSizeEncoder
+        self.embeddings = self._setupEmbeddings(embeddings, freeze=freezeEmbeds)
+        self.nClasses = nClasses
 
-        vocabSize, embeddingSize = embeddings.shape
-        self.embeddings = self._setupEmbeddings(embeddings, vocabSize, embeddingSize)
         self.encoder = BiLSTMEncoder(
-            embeddingSize,
-            hiddenSize=hiddenSizeEncoder,
+            self.embeddingSize,
+            hiddenSize=self.hiddenSizeEncoder,
             layers=layers,
             dropProb=dropProb)
-        self.classifer = SeqClassifier(hiddenSizeEncoder*8, hiddenSize=hiddenSizeCls, nClasses=nClasses)
+        self.classifier = SeqClassifier(
+            self.hiddenSizeEncoder*8,
+            hiddenSize=self.hiddenSizeCls,
+            nClasses=self.nClasses)
 
-    def _setupEmbeddings(self, embeddings, vocabSize, embeddingSize):
-        embeddingLayer = nn.Embedding(vocabSize, embeddingSize)
-        embeddingLayer.from_pretrained(embeddings, freeze=True)
+    def _setupEmbeddings(self, embeddings, freeze=False):
+        embeddingLayer = nn.Embedding(self.vocabSize, self.embeddingSize)
+        if embeddings is not None:
+            embeddingLayer.from_pretrained(embeddings, freeze=freeze)
         return embeddingLayer
 
     def freezeEncoder(self):
         for param in self.encoder.parameters():
             param.requires_grad = False
+        for param in self.embeddings.parameters():
+            param.requires_grad = False
 
     def forward(self, inputs):
         leftFeat = self.encoder(self.embeddings, inputs.leftSeq, inputs.leftLen)
         rightFeat = self.encoder(self.embeddings, inputs.rightSeq, inputs.rightLen)
-        return self.classifer(leftFeat, rightFeat)
+        return self.classifier(leftFeat, rightFeat)
 
     def predict(self, inputs):
         with torch.no_grad():
