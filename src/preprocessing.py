@@ -6,10 +6,26 @@ import torch
 from torch.utils.data import TensorDataset
 
 
+def loadSequences(rootDir, filenames, seq1Col, seq2Col=None, filterPred=None, **csvKws):
+    """Load all raw text sequences from a dataset"""
+    filePaths = (Path.cwd() / rootDir / f for f in filenames)
+    filterPred = filterPred or (lambda row: True)
+    columns = [seq1Col] + [seq2Col] if seq2Col else []
+    return pd.concat(
+        [
+            pd.read_csv(f, **csvKws)
+            .loc[filterPred]
+            .loc[:, columns]
+            for f in filePaths],
+        ignore_index=True
+    ).pipe(pd.melt, value_vars=columns, value_name='seq')['seq'].dropna()
+
+
 class WordSeqDataset(TensorDataset):
     """Generic class to load and vectorize word sequence datasets."""
 
-    def __init__(self, rootDir, split, tokenizer, splits, seq1Col, seq2Col, labelCol, labelMapping=None):
+    def __init__(self, rootDir, split, tokenizer, splits, seq1Col, seq2Col, labelCol,
+                 labelMapping=None, nClasses=None):
         """
         Args:
             root_dir (string): Directory containing the datasets.
@@ -20,6 +36,7 @@ class WordSeqDataset(TensorDataset):
             seq2Col: (string): Column name for second sequence column.
             labelCol: (string): Column name for label column.
             labelMapping: (dict, optional): Mapping of label values to integer values.
+            nClasses: (int, optional): Unique classes in dataset, otherwise inferred from label col.
         """
 
         self.filePath = Path.cwd() / rootDir / splits[split]
@@ -30,6 +47,7 @@ class WordSeqDataset(TensorDataset):
         self.samples = self._loadFile()
         self.labelMapping = labelMapping
         self.samples[self.labelCol] = self.samples[self.labelCol].map(labelMapping or (lambda v: v))
+        self.nClasses = nClasses or self.samples[self.labelCol].nunique()
 
         # Build Tensors
         seq1, seq1Lens = self.seqsToTensor(self.samples[self.seq1Col])
